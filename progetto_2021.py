@@ -45,17 +45,21 @@ gbRatings.head()
 goodBooks['original_publication_year']=goodBooks['original_publication_year'].astype(int)
 goodBooks['isbn13']=goodBooks['isbn13'].astype(float).astype(int)
 
-users["Location"]
-
 """### 1. Normalize the location field of *Users* dataset, splitting into city, region, country."""
 
-# sfruttiamo come è costruita la colonna Users, con separatore la virgola
+# sfruttiamo come è costruita la colonna Location, con separatore la virgola
+# dividiamo dunque ogni riga in tre parti e assegnamo ciascuna ad una colonna
 occ = users["Location"].str.split(",", n = 2, expand = True)
 users["City"]= occ[0]
 users["Region"]= occ[1]
 users["Country"]= occ[2]
 users
 
+# facciamo una valutazione dell'errore che abbiamo commesso o introdotto:
+# rows rappresenta il numero di righe del dataframe users, per ogni riga cerchiamo le virgole
+# e salviamo tutte le occorrenze in occ. Facciamo dunque un ciclo for per contare il numero di
+# virgole contenuto nella singola riga e se diverso da 2 aumentiamo il contatore globale conta di 1
+# stampiamo la percentuale di righe con un comportamento diverso dal previsto
 rows = users.Location.size
 conta = 0
 for line in users.Location:
@@ -65,27 +69,61 @@ for line in users.Location:
     count +=1
   if count!=2:
     conta +=1
-print(f"percentuale diversi={round((conta/rows)*100,3)}%, numero={conta}, totale={rows}")
+    #print(line)
+    #print('-'*50)
+print(f"percentuale comportamento diverso={round((conta/rows)*100,3)}%, numero={conta}, totale={rows}")
+
+# siccome la percentuale di righe con un comportamento diverso è del 0.541% possiamo trascurarle
+# consapevoli di aver introdotto dei potenziali errori. Potremmo in alternativa trovare soluzioni più accurate
+# specifiche per trattare queste 1510 righe
 
 """### 2. For each book in the *Books* dataset, compute its average rating."""
 
+# siccome le informazione relative al rating non sono contenute nel dataframe books, 
+# facciamo il merge con il df bRatings sul campo ISBN che è comune ad entrambi i df 
 joinBookRatings = pd.merge(books, bRatings, on='ISBN')
 joinBookRatings.head()
 
+# Identificato come unico un libro presi i campi ISBN, titolo, autore, anno di pubblicazione e publisher
+# raggruppiamo per questi campi e calcoliamo la media del book-rating per ogni libro
+# rinominiano in seguito la colonna per migliorare la comprensione e la visualizzazione
 avgRatings = joinBookRatings.groupby(['ISBN','Book-Title','Book-Author','Year-Of-Publication','Publisher'], as_index=False)['Book-Rating'].mean()[['ISBN','Book-Title','Book-Author','Year-Of-Publication','Publisher','Book-Rating']]
 avgRatings.rename({'Book-Rating': 'Media-Rating'}, axis=1, inplace=True)
 avgRatings
 
+# Potenzialmente i valori sono sbagliati perché 0 potrebbe essere un valore di default in caso di elemento nullo
+# e perché sensatamente quasi mai viene assegnata una valutazione così bassa per un numero così ampio di libri.
+# Sarebbe meglio controllare la fonte dati oppure il alternativa considerare solamente i libri con un book-rating 
+# diverso da zero prima di effettuare il calcolo della media-rating
+
+# mi copio joinBookRatings ed elimino tutte le righe che soddisfano la condizione Book-Rating nullo
+# eseguo poi le stesse operazioni fatte in precedenza per ricavare la colonna media-rating
+prova = joinBookRatings
+prova = prova.drop(prova[prova['Book-Rating'] == 0].index)
+avgRatings_2 = prova.groupby(['ISBN','Book-Title','Book-Author','Year-Of-Publication','Publisher'], as_index=False)['Book-Rating'].mean()[['ISBN','Book-Title','Book-Author','Year-Of-Publication','Publisher','Book-Rating']]
+avgRatings_2.rename({'Book-Rating': 'Media-Rating'}, axis=1, inplace=True)
+avgRatings_2
+
+# nel seguito utilizziamo avgRating ovvero considerando gli zeri come vere valutazioni
+
 """### 3. For each book in the *GoodBooks* dataset, compute its average rating."""
 
+# ispezioniamo la colonna average_rating ordinandola in modo decrescente
 goodBooks[['isbn', 'isbn13', 'authors', 'title', 'average_rating']].sort_values('average_rating',ascending=False)
 
+# Stabilito che un libro viene identificato univocamente da isbn, (isbn13), autore, titolo
+# fatta la considerazione rating_n equivale a valutazione n, calcolo la media pesata e la ponga nella colonna rating_calcolato
+# ritrovo un valore pari ad average_rating a meno di approssimazione alla seconda cifra decimale
+# divido per work_ratings_count perché valore pari alla somma del numero dei vari rating_n
 goodBooks['rating_calcolato'] = (goodBooks['ratings_1']*1+goodBooks['ratings_2']*2+goodBooks['ratings_3']*3+goodBooks['ratings_4']*4+goodBooks['ratings_5']*5)/goodBooks['work_ratings_count']
 goodBooks[['isbn', 'isbn13', 'authors', 'title', 'average_rating','rating_calcolato']].sort_values('rating_calcolato',ascending=False)
 
 """### 4. Merge together all rows sharing the same book title, author and publisher. We will call the resulting datset `merged books`. The books that have not been merged together will not appear in `merged books`."""
 
-count = pd.DataFrame({'count'    : joinBookRatings.groupby( [ "Book-Title", "Book-Author", "Publisher"] ).size()}).reset_index()
+# raggruppiamo le righe di joinBookRatings che possiedono lo stesso titolo, autore e publisher e 
+# contiamo il numero di occorrenza salvandolo nella colonna count. Successivamente, salviamo nel df
+# merged_books solo i libri che sono stati merged ovvero quelli che hanno count >= 2
+count = pd.DataFrame({'count': joinBookRatings.groupby( [ "Book-Title", "Book-Author", "Publisher"]).size()}).reset_index()
 merged_books = count[count['count'] >1]
 
 merged_books
@@ -95,15 +133,22 @@ merged_books
 The average is computed considering all books in `books` that have been merged.
 """
 
+# Per ogni libro di joinBookRatings, identificato da titolo, autore e publisher, dopo aver quindi raggruppato,
+# calcoliamo la media di Book-rating e la poniamo nella colonna Media-rating del df merged_books
 merged_books['Media-Rating'] = joinBookRatings.groupby(['Book-Title','Book-Author','Publisher'], as_index=False)['Book-Rating'].mean()['Book-Rating']
 
 merged_books
+
+# ricordiamo anche in questo caso il discorso fatto in precedenza con i book-rating nulli
 
 """### 6. For each book in `merged books` compute the minimum and maximum of the average ratings over all corresponding books in the `books` dataset.
 
 Hence for each book in `merged books` we will have exactly two values (a minimum and a maximum)
 """
 
+# per ogni libro in merged_books, che corrisponde quindi a quelli di joinBookRatings, 
+# identificato da titolo, autore, publisher, ISBN, calcoliamo la media
+# salviamo il minimo e il massimo della media nelle due colonne corrispondenti di merged_books
 df1 = pd.DataFrame({'Media-Rating':joinBookRatings.groupby(['Book-Title','Book-Author','Publisher','ISBN'])['Book-Rating'].mean()}).reset_index()
 merged_books['min'] = df1.groupby(['Book-Title','Book-Author','Publisher'], as_index=False)['Media-Rating'].min()['Media-Rating']
 merged_books['max'] = df1.groupby(['Book-Title','Book-Author','Publisher'], as_index=False)['Media-Rating'].max()['Media-Rating']
@@ -112,11 +157,22 @@ merged_books
 
 """### 7. For each book in `goodbooks`, compute the list of its authors. Assuming that the number of reviews with a text (column `work_text_reviews_count`) is split equally among all authors, find for each authors the total number of reviews with a text. We will call this quantity the *shared number of reviews with a text*."""
 
+# salviamo in un df tutte le righe di goodBooks con autori diversi, in modo da eliminare i duplicati
 authors = goodBooks[goodBooks.duplicated(['authors'])==False]
 
+# definiamo una funzione che data una stringa elimini gli spazi in eccedenza 
 def remove(string):
     return " ".join(string.split())
 
+# Creaimo un dizionario vuoto e decidiamo quali caratteri cercare (reg). Effettuiamo la precompilazione, 
+# senza considerare differenze per minuscole e maiuscole. Per comodità in temp5 creaimo un dizionario
+# composto da nome autore e work_text_reviews_count come valore
+# Facciamo un loop dove cerchiamo tutte le occorrenze dei caratteri prescelti, ovvero dividiamo in vari autori. 
+# Se troviamo almeno un'occorrenza (almeno un autore), facciamo un ciclo for per inserire il suo valore
+# di work_text_reviews_count diviso per il numero di autori della riga con la seguente logica:
+# se autore non ancora presente in myDict assegnare tutto il valore, altrimenti aggiornare il valore vecchio
+# sommandogli la nuova work_text_reviews_count diviso per il numero di autori della riga
+# utilizziamo la funzione remove per eliminare spazi in eccedenza e quindi non considerare due volte lo stesso autore
 myDict= {}
 reg = 'a-zA-Z.\s\-\u00A1-\u00FF'
 re_enum = re.compile('(['+reg+']+),?', re.UNICODE)
@@ -124,13 +180,13 @@ temp5 = authors.set_index('authors')['work_text_reviews_count'].to_dict()
 for key,value in temp5.items():
   occ = re_enum.findall(key)
   if occ:
-    j=0
     for j in range(len(occ)):
       if remove(occ[j]) not in myDict:
         myDict[remove(occ[j])] = int(value/len(occ))
       else:
         myDict[remove(occ[j])] = myDict[remove(occ[j])] + int(value/len(occ))
 
+# salviamo i risultati di myDict in un dataframe con le colonne autori e shared_number_of_reviews_with_text
 shared_number_of_reviews_with_text = pd.DataFrame(myDict.items(), columns=['Autori', 'shared_number_of_reviews_with_text'])
 
 shared_number_of_reviews_with_text
@@ -147,6 +203,16 @@ print(occ)
 
 """### 8. For each year of publication, determine the author that has the largest value of the shared number of reviews with a text."""
 
+# Creaimo un dizionario vuoto e decidiamo quali caratteri cercare (reg). Effettuiamo la precompilazione, 
+# senza considerare differenze per minuscole e maiuscole. Per comodità in temp6 creaimo un dizionario
+# composto da nome autore e original_publication_year come valore
+# Facciamo un loop dove cerchiamo tutte le occorrenze dei caratteri prescelti, ovvero dividiamo in vari autori. 
+# Se troviamo almeno un'occorrenza (almeno un autore), facciamo un ciclo for per inserire in myDict2 con chiave
+# original_publication_year il nome dell'autore con la seguente logica:
+# se l'anno non è ancora presente in myDict2 creo un nuovo record e vi assegno il corrispondente autore
+# se invece l'anno di pubblicazione è già presente in myDict2 recupero gli autori e vi aggiungo i nomi
+# di quelli nuovi, separandoli con un virgola ognuno 
+# utilizziamo la funzione remove per eliminare spazi in eccedenza 
 myDict2= {}
 reg = 'a-zA-Z.\s\-\u00A1-\u00FF'
 re_enum = re.compile('(['+reg+']+),?', re.UNICODE)
@@ -161,6 +227,14 @@ for key,value in temp6.items():
       else:
         myDict2[value] = myDict2[value]+','+remove(occ[j])
 
+# Creaimo un dizionario vuoto myDict3. Effettuiamo uno doppio ciclo su myDict2 contenente
+# autori e anni di pubblicazione e su myDict contenente autori e numero di review. 
+# Se troviamo l'autore in myDict, se l'anno associato non è presente ancora in myDict3 come chiave
+# allora creiamo un record con chiave anno e vi associamo il dizionario composto da 
+# {'autore':nome autore,'review':numero di reviews}
+# Nel caso in cui l'anno fosse invece già presente confrontiamo il numero di review e 
+# se maggiore sostituiamo nome autore e numero di review 
+# Generiamo poi un dataframe prima con chiave anno, poi con indice esterno
 myDict3 = {}
 for anno,aut in myDict2.items():
   for autore,review in myDict.items():
@@ -170,16 +244,27 @@ for anno,aut in myDict2.items():
       else:
         if myDict3[anno]['review'] <= review:
           myDict3[anno]['review'] = review
+          myDict3[anno]['autore'] = autore
 year_reviews =pd.DataFrame.from_dict(myDict3,orient='index')
 year_reviews.index.name = 'anno'
 year_reviews.reset_index(level=['anno'])
 
 """### 9. Assuming that there are no errors in the ISBN fields, find the books in both datasets, and compute the difference of average rating according to the ratings and the goodratings datasets"""
 
+# Assumiamo che non vi siano errori nel campo ISBN. Ci salviamo nel dataframe libri i libri di joinBookRating
+# dopo averli opportunamente raggruppati per ISBN per calcolare la media di Book-rating
+# Analogo procedimento con good_libri per i libri in goodBooks
+# Nella lista isbn_comuni mi salvo tutti i codici ISBN comuni nei due dataframe
 libri = pd.DataFrame({'Rating_books':joinBookRatings.groupby(["ISBN"])['Book-Rating'].mean()}).reset_index()
 good_libri = pd.DataFrame({'Rating_books':goodBooks.groupby(['isbn',"isbn13"])['average_rating'].mean()}).reset_index()
 isbn_comuni = good_libri[good_libri.isbn.isin(libri.ISBN)]['isbn'].to_list()
 
+# genero un array vuoto row_list. Scorrendo con un for sugli ISBN in isbn_comuni
+# mi salvo in val1 il valore di Rating-books recuperato da libri mentre in val2 il valore 
+# recuperato da good_libri. Creo un dizionario dict1 che abbia come chiavi isbn, Rating_books,
+# Rating_goodbooks e difference dove associo il corrispondente valore (differenza in valore assooluto 
+# del valore di rating). Appendo poi il dizionario nell'array row_list. 
+# Uscito dal ciclo genero un df con i dati raccolti in row_list
 row_list = []
 for lib in isbn_comuni:
   val1 = libri[libri['ISBN']== lib]['Rating_books'].values[0]
@@ -196,8 +281,13 @@ df4
 
 """### 10. Split the users dataset according to the age. One dataset contains the users with unknown age, one with age 0-14, one with age 15-24, one with age 25-34, and so on."""
 
+# Prima di tutto cerco di capire la massima età che sia presente in users -> 244
 users[users['Age'] == users['Age'].max()]
 
+# Divido il dataset users secondo blocchi di età. Prima creo il gruppo_0_14 separatamente
+# Poi tramite un ciclo su i da 1 a 23 compreso genereo tutti gli altri con il nome che varia 
+# secondo il tipo group_25_34 -> group 35_44 ecc. una volta generate tutte le variabili le aggiorno
+# per il dizionario var_holder  
 group_0_14 = users[users['Age']<15]
 var_holder = {}
 for i in range(1,24):
@@ -207,38 +297,81 @@ locals().update(var_holder)
 
 """### 11. Find the books that appear only in the goodbooks datasets."""
 
+# cerco i libri che compaiono solo nel dataframe goodbooks. Per farlo uso il metodo
+# isin che cerca i libri con isbn presente sia in libri che in good_libri 
+# poi con ~ faccio la negazione. Salvo solo i libri di goodBooks che hanno un isbn tra questi
 solo_in_goodbooks = goodBooks[~good_libri.isbn.isin(libri.ISBN)]
 
 solo_in_goodbooks
 
 """### 12. Assuming that each pair (author, title) identifies a book, for each book find the number of times it appears in the books dataset. Which books appear the most times?"""
 
+# Assumendo che la coppia autore, titolo identifichi un libro, per ogni libro cerchiamo il numero di volte che 
+# compare nel df books. Generiamo un df count_book che è composto dal raggruppamento di titolo e autore dei libri
+# in books, dove calcoliamo la dimensione del raggruppamento (ovvero il numero di occorrenze) e lo salviamo nella
+# colonna count. Per trovare il libro che compare il maggior numero di volte cerchiamo la riga che ha
+# valore di count massimo -> 21
 count_book = pd.DataFrame({'count': books.groupby( [ "Book-Title", "Book-Author"] ).size()}).reset_index()
 count_book[count_book['count'] == count_book['count'].max()]
 
-count_book
+count_book.sort_values('count',ascending=False)
 
 """### 13. Find the author with the highest average rating according to the goodbooks datasets."""
 
+'''
+esempio funzionamento
+Pino,Carlo 10
+Pino,Giulio 8
+Pino,Fede 0
+
+Pino    rating: 10 num_occ: 1
+Carlo   rating: 10 num_occ: 1
+
+Pino    rating: 18 num_occ: 2
+Carlo   rating: 10 num_occ: 1
+Giulio  rating: 8  num_occ: 1
+
+Pino    rating: 18 num_occ: 3
+Carlo   rating: 10 num_occ: 1
+Giulio  rating: 8  num_occ: 1
+Fede    rating: 0  num_occ: 1
+'''
+
+# Creaimo un dizionario vuoto myDict5 e decidiamo quali caratteri cercare (reg). Effettuiamo la precompilazione, 
+# senza considerare differenze per minuscole e maiuscole. Per comodità in temp8 creaimo un dizionario
+# composto da nome autore e average-rating come valore
+# Facciamo un loop dove cerchiamo tutte le occorrenze dei caratteri prescelti, ovvero dividiamo la riga in vari autori. 
+# Se troviamo almeno un'occorrenza (almeno un autore), facciamo un ciclo for con la seguente logica:
+# se autore non ancora presente in myDict5 assegnare un dizionario con il valore di rating e numero di occ ovvero
+# il numero di autori con cui divide tale rating, altrimenti aggiornare il valore vecchio di rating sommandovi il nuovo
+# utilizziamo la funzione remove per eliminare spazi in eccedenza e quindi non considerare due volte lo stesso autore come chiave
 myDict5= {}
 reg = 'a-zA-Z.\s\-\u00A1-\u00FF'
 re_enum = re.compile('(['+reg+']+),?', re.UNICODE)
-temp5 = authors.set_index('authors')['average_rating'].to_dict()
-for key,value in temp5.items():
+temp8 = authors.set_index('authors')['average_rating'].to_dict()
+for key,value in temp8.items():
   occ = re_enum.findall(key)
   if occ:
     for j in range(len(occ)):
       if remove(occ[j]) not in myDict5:
-        myDict5[remove(occ[j])] = {'rating':value,'num_occ':len(occ)}
+        #myDict5[remove(occ[j])] = {'rating':value,'num_occ':len(occ)}
+        myDict5[remove(occ[j])] = {'rating':value,'num_occ':1}
       else:
-        myDict5[remove(occ[j])] = {'rating':myDict5[remove(occ[j])]['rating']+value,'num_occ':len(occ)}
+        #myDict5[remove(occ[j])] = {'rating':myDict5[remove(occ[j])]['rating']+value,'num_occ':len(occ)}
+        myDict5[remove(occ[j])] = {'rating':myDict5[remove(occ[j])]['rating']+value,'num_occ':myDict5[remove(occ[j])]['num_occ']+1}
 
+# creaiamo un df con i valori presi da myDict5 (avremo due colonne Autori e 
+# rating_plus_count fatta così {'rating': 4.34, 'num_occ': 1})
 author_max_rating = pd.DataFrame(myDict5.items(), columns=['Autori', 'rating_plus_count'])
+# normalizziamo la colonna rating_plus_count divendola in due diverse colonne e mettiamo il tutto nel df normalized
 normalized = pd.json_normalize(author_max_rating['rating_plus_count'])
-
+# ora fondiamo il df author_max_rating e normalized droppando la vecchia colonna rating_plus_count 
 author_max_rating = author_max_rating.join(normalized).drop(columns=['rating_plus_count'])
+# ricalcoliamo la colonna rating facendo il rapporto tra valore di rating e numero di occorrenze
 author_max_rating['rating']= author_max_rating['rating']/author_max_rating['num_occ']
+# possiamo ora droppare la colonna num_occ che non ci serve più
 author_max_rating.drop('num_occ', axis=1, inplace=True)
 author_max_rating
 
+# cerchiamo l'indice dell'autore con valore massimo di rating in modo da potere mostrare tutto il record
 author_max_rating.loc[author_max_rating['rating'].idxmax()]
